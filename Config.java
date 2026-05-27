@@ -13,6 +13,8 @@ public class Config {
     static final Path CONFIG_PATH = CONFIG_DIR.resolve("config");
     static final Path STATE_PATH = CONFIG_DIR.resolve("state.json");
     static final Path LOCK_PATH = CONFIG_DIR.resolve("lock");
+    static final Path BUS_ROOT_DEFAULT = Path.of(
+            System.getProperty("user.home"), ".local", "share", "elf-bus");
 
     String githubUser;
     String githubToken;
@@ -29,6 +31,7 @@ public class Config {
     boolean emailNotifications;
     Set<String> topics;
     Set<String> orgs;
+    Path busRoot;
 
     static Config load() {
         if (!Files.exists(CONFIG_PATH)) {
@@ -69,8 +72,12 @@ public class Config {
         c.emailNotifications = !"false".equalsIgnoreCase(raw.getOrDefault("EMAIL_NOTIFICATIONS", "true"));
         c.topics = parseSet(raw.getOrDefault("TOPICS", ""));
         c.orgs = parseSet(raw.getOrDefault("ORGS", ""));
+        c.busRoot = Path.of(raw.getOrDefault("BUS_ROOT", BUS_ROOT_DEFAULT.toString()));
         return c;
     }
+
+    Path busRoot()        { return busRoot; }
+    Path busSeenIdsPath() { return CONFIG_DIR.resolve("elf-bus-seen"); }
 
     void validate(boolean requireEmail) {
         requireField("GITHUB_USER", githubUser);

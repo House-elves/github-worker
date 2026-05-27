@@ -860,6 +860,33 @@ public class GitHubClient {
 
     // --- Bot actions ---
 
+    // Create a new issue via gh CLI. Returns the issue URL on success or null on failure.
+    // Used by the elf-bus github.issue.create handler.
+    String createIssue(String ownerRepo, String title, String body,
+                       java.util.List<String> labels, java.util.List<String> assignees) {
+        java.util.List<String> args = new java.util.ArrayList<>(java.util.List.of(
+                "issue", "create",
+                "--repo", ownerRepo,
+                "--title", title,
+                "--body", body
+        ));
+        if (labels != null && !labels.isEmpty()) {
+            args.add("--label");
+            args.add(String.join(",", labels));
+        }
+        if (assignees != null && !assignees.isEmpty()) {
+            args.add("--assignee");
+            args.add(String.join(",", assignees));
+        }
+        return ghText(Actor.BOT, args.toArray(new String[0]));
+    }
+
+    // Apply a label to an existing issue/PR. Used by the elf-bus github.issue.label handler.
+    boolean addLabel(String ownerRepo, int number, String label) {
+        return ghExitCode(Actor.BOT, "issue", "edit", String.valueOf(number),
+                "--repo", ownerRepo, "--add-label", label) == 0;
+    }
+
     Long postComment(String ownerRepo, int number, String body) {
         String nodeId = getIssueOrPRNodeId(Actor.BOT, ownerRepo, number);
         if (nodeId == null) return null;
