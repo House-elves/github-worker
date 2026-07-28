@@ -117,7 +117,7 @@ public class GitHubWorker implements Callable<Integer> {
                         "github-worker",
                         config.busSeenIdsPath(),
                         List.of(
-                                new GitHubIssueHandlers.Create(gh),
+                                new GitHubIssueHandlers.Create(gh, config.githubUser),
                                 new GitHubIssueHandlers.Comment(gh),
                                 new GitHubIssueHandlers.Label(gh)
                         ),

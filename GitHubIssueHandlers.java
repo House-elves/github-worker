@@ -26,7 +26,13 @@ public final class GitHubIssueHandlers {
     /** {@code github.issue.create} → {@code github.issue.create.result} */
     public static final class Create implements ElfBusHandler {
         private final GitHubClient gh;
-        public Create(GitHubClient gh) { this.gh = gh; }
+        private final String defaultAssignee;
+
+        public Create(GitHubClient gh, String defaultAssignee) {
+            this.gh = gh;
+            this.defaultAssignee = defaultAssignee;
+        }
+
         @Override public String kind() { return "github.issue.create"; }
 
         @Override
@@ -37,6 +43,16 @@ public final class GitHubIssueHandlers {
             String body  = requireText(b, "body");
             List<String> labels    = textArray(b, "labels");
             List<String> assignees = textArray(b, "assignees");
+            // An unassigned issue is invisible to us: the issue workflow finds
+            // work with "assignee:<principal>", so an issue filed by a peer elf
+            // (mail-worker triaging an email, say) would sit untouched forever
+            // while looking, on GitHub, like it had been accepted. Peers do not
+            // set an assignee - they have no reason to know our query - so
+            // default it here rather than expecting every caller to remember.
+            if (assignees == null || assignees.isEmpty()) {
+                assignees = defaultAssignee == null || defaultAssignee.isBlank()
+                        ? List.of() : List.of(defaultAssignee);
+            }
 
             String url = gh.createIssue(repo, title, body, labels, assignees);
             if (url == null) {

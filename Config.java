@@ -22,6 +22,8 @@ public class Config {
     String botToken;
     Set<String> excludeOrgs;
     String gmailAddress;
+    /** The account SMTP AUTH runs as - Gmail rejects an alias here. */
+    String gmailAuthUser;
     String gmailAppPassword;
     String sendTo;
     String activeHours;
@@ -32,6 +34,52 @@ public class Config {
     Set<String> topics;
     Set<String> orgs;
     Path busRoot;
+    /** Whether a review may push fixes and merge, or only comment. */
+    boolean reviewAutoFix;
+    boolean reviewAutoMerge;
+    /** Finding severities a review will act on; anything else stays a comment. */
+    Set<String> reviewFixSeverities;
+
+    /** Prefix marking a config value that lives in GCP Secret Manager. */
+    static final String SECRET_PREFIX = "sm://";
+    static final String SECRET_PROJECT = "bin-space-microservices";
+
+    /**
+     * Resolves {@code sm://secret-name} to the secret's latest version, so
+     * credentials live in Secret Manager rather than in plaintext on disk.
+     * Anything without the prefix is returned as-is, which keeps the config
+     * format backwards compatible.
+     *
+     * <p>Shells out to gcloud rather than pulling in the client library: this
+     * runs on a workstation that already has an authenticated gcloud, and a
+     * jbang single-file script should not grow a dependency tree for one call.
+     *
+     * <p>Fails loudly. A silently-empty credential here would show up as a
+     * confusing auth error hours later in an unrelated part of the run.
+     */
+    private static String resolveSecret(String value) {
+        if (value == null || !value.startsWith(SECRET_PREFIX)) {
+            return value;
+        }
+        String name = value.substring(SECRET_PREFIX.length()).strip();
+        try {
+            Process p = new ProcessBuilder("gcloud", "secrets", "versions", "access", "latest",
+                    "--secret=" + name, "--project=" + SECRET_PROJECT)
+                    .redirectErrorStream(false)
+                    .start();
+            String out = new String(p.getInputStream().readAllBytes());
+            if (!p.waitFor(60, java.util.concurrent.TimeUnit.SECONDS) || p.exitValue() != 0) {
+                String err = new String(p.getErrorStream().readAllBytes()).strip();
+                System.err.println("Failed to resolve " + value + " from Secret Manager: " + err);
+                System.exit(1);
+            }
+            return out.strip();
+        } catch (Exception e) {
+            System.err.println("Failed to resolve " + value + ": " + e.getMessage());
+            System.exit(1);
+            return null;
+        }
+    }
 
     static Config load() {
         if (!Files.exists(CONFIG_PATH)) {
@@ -48,7 +96,8 @@ public class Config {
                     continue;
                 int eq = line.indexOf('=');
                 if (eq > 0) {
-                    raw.put(line.substring(0, eq).strip(), line.substring(eq + 1).strip());
+                    raw.put(line.substring(0, eq).strip(),
+                            resolveSecret(line.substring(eq + 1).strip()));
                 }
             }
         } catch (IOException e) {
@@ -63,13 +112,29 @@ public class Config {
         c.botToken = raw.getOrDefault("BOT_TOKEN", "");
         c.excludeOrgs = parseSet(raw.getOrDefault("EXCLUDE_ORGS", ""));
         c.gmailAddress = raw.getOrDefault("GMAIL_ADDRESS", "");
-        c.gmailAppPassword = raw.getOrDefault("GMAIL_APP_PASSWORD", "");
+        // Gmail authenticates the mailbox, not the alias: sending as
+        // bin.chicken@bin-space.app while authenticating as that name gets
+        // "535-5.7.8 Username and Password not accepted", which reads as a bad
+        // password rather than the wrong account. Defaults to GMAIL_ADDRESS so
+        // a config without this key behaves as before.
+        c.gmailAuthUser = raw.getOrDefault("GMAIL_AUTH_USER", c.gmailAddress);
+        // Google displays app passwords in four spaced groups; the spaces are
+        // presentation only and SMTP AUTH wants the bare 16 characters. Storing
+        // it as displayed is the obvious mistake, and it fails as
+        // "535 Username and Password not accepted" - indistinguishable from a
+        // wrong password.
+        c.gmailAppPassword = raw.getOrDefault("GMAIL_APP_PASSWORD", "").replaceAll("\\s", "");
         c.sendTo = raw.getOrDefault("SEND_TO", "");
         c.activeHours = raw.getOrDefault("ACTIVE_HOURS", "08-18");
         c.workDir = Path.of(raw.getOrDefault("WORK_DIR", "/tmp/github-worker"));
         c.lookbackDays = Integer.parseInt(raw.getOrDefault("LOOKBACK_DAYS", "7"));
         c.agent = raw.getOrDefault("AGENT", "claude");
         c.emailNotifications = !"false".equalsIgnoreCase(raw.getOrDefault("EMAIL_NOTIFICATIONS", "true"));
+        c.reviewAutoFix = !"false".equalsIgnoreCase(raw.getOrDefault("REVIEW_AUTO_FIX", "true"));
+        c.reviewAutoMerge = !"false".equalsIgnoreCase(raw.getOrDefault("REVIEW_AUTO_MERGE", "true"));
+        c.reviewFixSeverities = parseSet(
+                raw.getOrDefault("REVIEW_FIX_SEVERITIES", "CRITICAL,SUGGESTION"))
+                .stream().map(String::toUpperCase).collect(Collectors.toSet());
         c.topics = parseSet(raw.getOrDefault("TOPICS", ""));
         c.orgs = parseSet(raw.getOrDefault("ORGS", ""));
         c.busRoot = Path.of(raw.getOrDefault("BUS_ROOT", BUS_ROOT_DEFAULT.toString()));
