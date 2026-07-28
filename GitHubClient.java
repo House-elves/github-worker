@@ -1427,7 +1427,14 @@ public class GitHubClient {
 
     // --- CI checks ---
 
-    enum CIStatus { PASS, FAIL, PENDING }
+    /**
+     * NONE means the commit has no checks at all - which is NOT the same as
+     * green. An empty check list read as PASS made "merge once CI is green"
+     * vacuous on a repo without CI, and racy on one with it: checks take a
+     * moment to register after a push, and in that window there is nothing to
+     * see. The caller decides what to do about it; this only reports it.
+     */
+    enum CIStatus { PASS, FAIL, PENDING, NONE }
 
     CIStatus getCIStatus(String ownerRepo, int prNumber) {
         String[] parts = splitOwnerRepo(ownerRepo);
@@ -1487,7 +1494,7 @@ public class GitHubClient {
         }
         if (anyFailed) return CIStatus.FAIL;
         if (anyPending) return CIStatus.PENDING;
-        return CIStatus.PASS;
+        return contexts.size() == 0 ? CIStatus.NONE : CIStatus.PASS;
     }
 
     String getCIFailureDetails(String ownerRepo, int prNumber) {

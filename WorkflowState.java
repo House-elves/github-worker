@@ -56,6 +56,8 @@ public class WorkflowState {
         /** owner/repo the head branch lives on - a fork cannot be pushed to. */
         public String headRepo;
         public int attempts;
+        /** Consecutive CI polls that found no checks at all. */
+        public int noChecksTicks;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

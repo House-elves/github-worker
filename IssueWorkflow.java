@@ -1081,6 +1081,13 @@ public class IssueWorkflow {
                 System.out.println("  CI still running, waiting.");
                 return WorkflowState.IssueState.MONITORING_CI;
             }
+            case NONE -> {
+                // Nothing to wait for. This path does not merge, so an absent
+                // gate is not dangerous here - it just must not hang.
+                System.out.println("  Repo has no CI - nothing to wait for.");
+                entry.lastUpdated = Instant.now();
+                return WorkflowState.IssueState.DONE;
+            }
         }
         return WorkflowState.IssueState.MONITORING_CI;
     }

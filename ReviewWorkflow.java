@@ -268,14 +268,36 @@ public class ReviewWorkflow {
         switch (status) {
             case PENDING -> {
                 System.out.println("  CI still running, waiting.");
+                entry.noChecksTicks = 0;
                 return WorkflowState.ReviewState.MONITORING_CI;
+            }
+            case NONE -> {
+                // No checks at all. Wait a couple of ticks first, because
+                // checks take a moment to register after a push and an empty
+                // list looks identical either way. If they never appear, this
+                // repo has no CI - and "merge once CI is green" cannot mean
+                // "merge because nothing disagreed".
+                entry.noChecksTicks++;
+                if (entry.noChecksTicks < 3) {
+                    System.out.println("  No checks yet (" + entry.noChecksTicks + "/3), waiting.");
+                    return WorkflowState.ReviewState.MONITORING_CI;
+                }
+                System.out.println("  Repo has no CI - not merging on an absent gate.");
+                if (!dryRun) {
+                    gh.postComment(ownerRepo, prNumber,
+                            "Review applied, but this repository has no CI, so there is nothing "
+                                    + "for me to merge on. Merging needs a human. @" + config.githubUser);
+                }
+                return WorkflowState.ReviewState.DONE;
             }
             case FAIL -> {
                 System.out.println("  CI failed - back to fixing.");
+                entry.noChecksTicks = 0;
                 entry.lastUpdated = Instant.now();
                 return WorkflowState.ReviewState.FIXING;
             }
             case PASS -> {
+                entry.noChecksTicks = 0;
                 if (!config.reviewAutoMerge) {
                     System.out.println("  CI green; auto-merge off, leaving it.");
                     if (!dryRun) {
