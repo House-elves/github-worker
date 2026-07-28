@@ -271,8 +271,28 @@ public class GitHubClient {
 
     List<JsonNode> fetchAssignedIssues() {
         String since = LocalDate.now().minusDays(config.lookbackDays).format(DateTimeFormatter.ISO_DATE);
-        String searchQuery = "assignee:" + config.githubUser + " is:open is:issue created:>=" + since;
 
+        // Assignment is how the principal hands us work. A configured requester
+        // filing their own issue is the other way in: expecting someone who is
+        // not a developer to know they must also assign it is how a request
+        // sits untouched while looking, to them, like it was received.
+        List<JsonNode> issues = new ArrayList<>(searchIssues(
+                "assignee:" + config.githubUser + " is:open is:issue created:>=" + since));
+        for (String requester : config.requesters) {
+            if (requester.isBlank()) continue;
+            for (JsonNode extra : searchIssues(
+                    "author:" + requester.trim() + " is:open is:issue created:>=" + since)) {
+                boolean seen = issues.stream().anyMatch(i ->
+                        i.path("repository").path("nameWithOwner").asText("")
+                                .equals(extra.path("repository").path("nameWithOwner").asText(""))
+                                && i.path("number").asInt() == extra.path("number").asInt());
+                if (!seen) issues.add(extra);
+            }
+        }
+        return issues;
+    }
+
+    private List<JsonNode> searchIssues(String searchQuery) {
         JsonNode data = graphqlWithVars(Actor.USER, """
                 query($q: String!) {
                   search(query: $q, type: ISSUE, first: 50) {
@@ -1014,11 +1034,47 @@ public class GitHubClient {
         if (data == null) return false;
         JsonNode reactions = data.path("node").path("reactions").path("nodes");
         for (JsonNode r : reactions) {
-            if (config.githubUser.equals(r.path("user").path("login").asText(""))) {
+            if (config.approvers.contains(r.path("user").path("login").asText(""))) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * The most recent comment on {@code number} left by an approver after
+     * {@code afterCommentId}, or null. Separate from
+     * {@link #getUserCommentAfter} because that one is scoped to the principal;
+     * an approval can come from anyone entitled to give one.
+     */
+    String getApproverCommentAfter(String ownerRepo, int number, long afterCommentId) {
+        String[] parts = splitOwnerRepo(ownerRepo);
+        JsonNode data = graphql(Actor.USER, String.format("""
+                { repository(owner: "%s", name: "%s") {
+                    issueOrPullRequest(number: %d) {
+                      ... on Issue {
+                        comments(first: 100) {
+                          nodes { databaseId body author { login } }
+                        }
+                      }
+                    }
+                } }""", parts[0], parts[1], number));
+        if (data == null) return null;
+        JsonNode nodes = data.path("repository").path("issueOrPullRequest")
+                .path("comments").path("nodes");
+        String latest = null;
+        boolean seen = false;
+        for (JsonNode c : nodes) {
+            if (c.path("databaseId").asLong() == afterCommentId) {
+                seen = true;
+                continue;
+            }
+            if (!seen) continue;
+            if (config.approvers.contains(c.path("author").path("login").asText(""))) {
+                latest = c.path("body").asText("");
+            }
+        }
+        return latest;
     }
 
     String getUserCommentAfter(String ownerRepo, int number, long afterCommentId) {

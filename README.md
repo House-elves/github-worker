@@ -86,7 +86,8 @@ Stored in `~/.config/github-worker/config`:
 | `BOT_USER` | Bot GitHub username | — |
 | `BOT_TOKEN` | Bot GitHub Personal Access Token | — |
 | `EXCLUDE_ORGS` | Comma-separated orgs to skip | — |
-| `GMAIL_ADDRESS` | Gmail sender address | — |
+| `GMAIL_ADDRESS` | Gmail From address (may be an alias) | — |
+| `GMAIL_AUTH_USER` | Mailbox SMTP AUTH runs as — Gmail rejects an alias | `GMAIL_ADDRESS` |
 | `GMAIL_APP_PASSWORD` | Gmail App Password | — |
 | `SEND_TO` | Email recipients (comma-separated) | — |
 | `ACTIVE_HOURS` | Hours to run (24h, e.g. `07-22`) | `07-22` |
@@ -97,8 +98,24 @@ Stored in `~/.config/github-worker/config`:
 | `EMAIL_NOTIFICATIONS` | Send email summaries (`true`/`false`) | `true` |
 | `TOPICS` | Comma-separated topics for discovery | — |
 | `ORGS` | Comma-separated orgs or repos for discovery scope | — |
+| `APPROVERS` | Extra GitHub logins whose 👍/👎/comment settles an issue | principal only |
+| `REQUESTERS` | GitHub logins whose issues are picked up even when unassigned | — |
+| `REVIEW_AUTO_FIX` | Apply the review's own findings to the PR | `true` |
+| `REVIEW_AUTO_MERGE` | Merge the PR once CI is green | `true` |
+| `REVIEW_FIX_SEVERITIES` | Finding severities to act on | `CRITICAL,SUGGESTION` |
 
 `ORGS` supports both `quarkiverse` (whole org) and `quarkusio/quarkus` (specific repo).
+
+Any value may be written as `sm://secret-name` to read it from GCP Secret
+Manager instead of holding it in plaintext here.
+
+`APPROVERS` and `REQUESTERS` exist for people who are not developers. Discovery
+is otherwise `assignee:<principal>` and approval is the principal's reaction
+alone — so a product owner filing their own request would see it sit untouched,
+and could not approve it themselves. `REQUESTERS` lets their issues in;
+`APPROVERS` lets their 👍, 👎, or reply settle it. A reply is classified as
+approval or correction rather than assumed to be either: "yes but make it blue"
+is not an approval, and treating it as one builds the wrong thing.
 
 Config can also be edited from the dashboard UI.
 

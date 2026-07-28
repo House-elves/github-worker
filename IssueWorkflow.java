@@ -182,8 +182,61 @@ public class IssueWorkflow {
             return WorkflowState.IssueState.NEW;
         }
 
+        // No reaction - but an approver may have replied in words instead.
+        // Expecting a non-developer to know that a 👍 reaction is the magic
+        // gesture is a poor bargain, so read the comment and decide what it
+        // meant. "yes please" proceeds; "actually, make it blue" must NOT
+        // proceed with the plan it is correcting.
+        String comment = gh.getApproverCommentAfter(ownerRepo, issueNumber, entry.botCommentId);
+        if (comment != null && !comment.isBlank()) {
+            if (isApproval(comment)) {
+                System.out.println("  Approving comment received — proceeding to coding.");
+                entry.lastUpdated = Instant.now();
+                return WorkflowState.IssueState.CODING;
+            }
+            entry.attempts++;
+            if (entry.attempts >= MAX_ATTEMPTS) {
+                System.out.println("  Comment feedback but max attempts reached.");
+                if (!dryRun) {
+                    gh.postComment(ownerRepo, issueNumber,
+                            "I've tried " + MAX_ATTEMPTS + " times and still haven't got this right. "
+                                    + "@" + config.githubUser + " please take a look.");
+                }
+                entry.lastUpdated = Instant.now();
+                return WorkflowState.IssueState.DONE;
+            }
+            System.out.println("  Comment reads as a correction — re-planning.");
+            entry.feedbackText = comment;
+            entry.botCommentId = null;
+            entry.lastUpdated = Instant.now();
+            return WorkflowState.IssueState.NEW;
+        }
+
         System.out.println("  No reaction yet, waiting.");
         return WorkflowState.IssueState.AWAITING_APPROVAL;
+    }
+
+    /**
+     * Whether an approver's reply means "go ahead" rather than "change this".
+     * Asked of the agent rather than pattern-matched: "yes but make it blue"
+     * contains a yes and is not one, and that mistake builds the wrong thing.
+     * Anything unclear is treated as a correction - re-confirming costs a
+     * round trip, guessing wrong costs a wasted implementation.
+     */
+    private boolean isApproval(String comment) {
+        String prompt = """
+                Someone was asked to confirm a plan before work starts. They replied:
+
+                %s
+
+                Does this reply approve the plan as it stands, or ask for something
+                to change or be clarified first?
+
+                Answer with exactly one word: APPROVE or REVISE.
+                If there is any doubt, answer REVISE.
+                """.formatted(comment);
+        String answer = claude.runBare(prompt);
+        return answer != null && answer.trim().toUpperCase().startsWith("APPROVE");
     }
 
     // --- CODING: Clone, fix, create draft PR ---

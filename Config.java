@@ -39,6 +39,18 @@ public class Config {
     boolean reviewAutoMerge;
     /** Finding severities a review will act on; anything else stays a comment. */
     Set<String> reviewFixSeverities;
+    /**
+     * GitHub logins whose 👍/👎/comment settles an AWAITING_APPROVAL issue.
+     * More than the principal now: a product owner who is not a developer can
+     * approve their own request without going through him.
+     */
+    Set<String> approvers;
+    /**
+     * GitHub logins whose issues we pick up even when unassigned. Discovery is
+     * otherwise "assignee:<principal>", which a non-developer filing a request
+     * has no reason to know about - their issue would sit looking accepted.
+     */
+    Set<String> requesters;
 
     /** Prefix marking a config value that lives in GCP Secret Manager. */
     static final String SECRET_PREFIX = "sm://";
@@ -135,6 +147,11 @@ public class Config {
         c.reviewFixSeverities = parseSet(
                 raw.getOrDefault("REVIEW_FIX_SEVERITIES", "CRITICAL,SUGGESTION"))
                 .stream().map(String::toUpperCase).collect(Collectors.toSet());
+        // The principal always approves, whatever else is configured - losing
+        // that to a typo would strand every issue in AWAITING_APPROVAL.
+        c.approvers = new java.util.HashSet<>(parseSet(raw.getOrDefault("APPROVERS", "")));
+        c.approvers.add(c.githubUser);
+        c.requesters = parseSet(raw.getOrDefault("REQUESTERS", ""));
         c.topics = parseSet(raw.getOrDefault("TOPICS", ""));
         c.orgs = parseSet(raw.getOrDefault("ORGS", ""));
         c.busRoot = Path.of(raw.getOrDefault("BUS_ROOT", BUS_ROOT_DEFAULT.toString()));
