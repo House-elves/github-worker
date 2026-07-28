@@ -25,7 +25,7 @@ public class WorkflowState {
     }
 
     enum ReviewState {
-        NEW, REVIEW_POSTED, DONE, MERGED, CLOSED
+        NEW, REVIEW_POSTED, FIXING, MONITORING_CI, DONE, MERGED, CLOSED
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -51,6 +51,11 @@ public class WorkflowState {
         public int prNumber;
         public String headBranch;
         public String author;
+        /** The review we posted, carried forward so FIXING knows what to fix. */
+        public String reviewBody;
+        /** owner/repo the head branch lives on - a fork cannot be pushed to. */
+        public String headRepo;
+        public int attempts;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

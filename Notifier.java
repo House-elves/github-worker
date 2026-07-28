@@ -67,7 +67,7 @@ public class Notifier {
             Session session = Session.getInstance(props, new Authenticator() {
                 @Override
                 protected PasswordAuthentication getPasswordAuthentication() {
-                    return new PasswordAuthentication(config.gmailAddress, config.gmailAppPassword);
+                    return new PasswordAuthentication(config.gmailAuthUser, config.gmailAppPassword);
                 }
             });
 

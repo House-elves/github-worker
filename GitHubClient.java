@@ -424,6 +424,55 @@ public class GitHubClient {
         return false;
     }
 
+    /**
+     * Squash-merge a PR as the bot. Squash to match how the humans land work
+     * here, so history stays one-commit-per-change.
+     *
+     * <p>Returns false rather than throwing: a merge that loses a race with a
+     * human, or hits branch protection, is a normal outcome that should leave
+     * the PR alone and be retried or reported, not abort the run.
+     */
+    boolean mergePR(String ownerRepo, int prNumber) {
+        int code = ghExitCode(Actor.BOT, "pr", "merge", String.valueOf(prNumber),
+                "--repo", ownerRepo, "--squash");
+        if (code != 0) {
+            System.err.println("  Merge failed for " + ownerRepo + "#" + prNumber
+                    + " (exit " + code + ") - leaving it for a human.");
+        }
+        return code == 0;
+    }
+
+    /**
+     * The owner/repo the PR's head branch lives on. A PR from a fork cannot be
+     * pushed to with our credentials, so the caller has to know before it tries
+     * to write fixes back.
+     */
+    String getPRHeadRepo(String ownerRepo, int prNumber) {
+        String[] parts = splitOwnerRepo(ownerRepo);
+        JsonNode data = graphql(Actor.USER, String.format("""
+                { repository(owner: "%s", name: "%s") {
+                    pullRequest(number: %d) {
+                      headRepository { nameWithOwner }
+                    }
+                  } }""", parts[0], parts[1], prNumber));
+        if (data == null) return null;
+        String v = data.path("repository").path("pullRequest")
+                .path("headRepository").path("nameWithOwner").asText("");
+        return v.isBlank() ? null : v;
+    }
+
+    /**
+     * Push the reviewed worktree's {@code pr-<n>} branch back onto the PR's own
+     * head branch. The worktree checks the PR out under a local name, so the
+     * refspec has to map it back to the branch the PR actually tracks.
+     */
+    boolean pushReviewFixes(Path repoDir, String headRepo, String headBranch, int prNumber) {
+        String url = "https://x-access-token:" + config.botToken + "@github.com/" + headRepo + ".git";
+        String result = git(Actor.BOT, repoDir, "push", url,
+                "pr-" + prNumber + ":" + headBranch);
+        return result != null;
+    }
+
     boolean isPRMerged(String ownerRepo, int prNumber) {
         return "MERGED".equals(getPRState(ownerRepo, prNumber));
     }
@@ -859,6 +908,33 @@ public class GitHubClient {
     }
 
     // --- Bot actions ---
+
+    // Create a new issue via gh CLI. Returns the issue URL on success or null on failure.
+    // Used by the elf-bus github.issue.create handler.
+    String createIssue(String ownerRepo, String title, String body,
+                       java.util.List<String> labels, java.util.List<String> assignees) {
+        java.util.List<String> args = new java.util.ArrayList<>(java.util.List.of(
+                "issue", "create",
+                "--repo", ownerRepo,
+                "--title", title,
+                "--body", body
+        ));
+        if (labels != null && !labels.isEmpty()) {
+            args.add("--label");
+            args.add(String.join(",", labels));
+        }
+        if (assignees != null && !assignees.isEmpty()) {
+            args.add("--assignee");
+            args.add(String.join(",", assignees));
+        }
+        return ghText(Actor.BOT, args.toArray(new String[0]));
+    }
+
+    // Apply a label to an existing issue/PR. Used by the elf-bus github.issue.label handler.
+    boolean addLabel(String ownerRepo, int number, String label) {
+        return ghExitCode(Actor.BOT, "issue", "edit", String.valueOf(number),
+                "--repo", ownerRepo, "--add-label", label) == 0;
+    }
 
     Long postComment(String ownerRepo, int number, String body) {
         String nodeId = getIssueOrPRNodeId(Actor.BOT, ownerRepo, number);
@@ -1550,6 +1626,18 @@ public class GitHubClient {
         return wtDir;
     }
 
+    /**
+     * The canonical repo's URL, over whatever transport origin already uses -
+     * cloning just proved that transport authenticates, and guessing the other
+     * one is how you get a remote that only fails later, mid-fetch.
+     */
+    private String canonicalRemoteUrl(Path mainDir, String ownerRepo) {
+        String origin = git(Actor.USER, mainDir, "remote", "get-url", "origin");
+        boolean ssh = origin != null && origin.trim().startsWith("git@");
+        return ssh ? "git@github.com:" + ownerRepo + ".git"
+                : "https://github.com/" + ownerRepo + ".git";
+    }
+
     Path cloneForReview(String ownerRepo, int prNumber, String headBranch, String author) throws IOException {
         Path wtDir = worktreeDir(ownerRepo, prNumber);
 
@@ -1561,10 +1649,24 @@ public class GitHubClient {
             }
         }
 
+        // The PR ref is fetched from "upstream", but the clone above only sets
+        // "origin". ensureMainClone adds upstream when it forks for the issue
+        // workflow, so a repo whose main clone was first created HERE never had
+        // one, and every fetch died with "'upstream' does not appear to be a git
+        // repository". Latent for as long as issues always came first; renaming
+        // the org changed every clone directory and took this path cold.
+        String remotes = git(Actor.USER, mainDir, "remote");
+        if (remotes == null || !remotes.contains("upstream")) {
+            git(Actor.USER, mainDir, "remote", "add", "upstream", canonicalRemoteUrl(mainDir, ownerRepo));
+        }
+
         removeWorktree(mainDir, wtDir);
 
         git(Actor.USER, mainDir, "branch", "-D", "pr-" + prNumber);
         git(Actor.USER, mainDir, "fetch", "upstream", "pull/" + prNumber + "/head:pr-" + prNumber);
+        // The base to diff against. Without this the review has nothing to
+        // compare the PR to but a possibly-stale local branch.
+        git(Actor.USER, mainDir, "fetch", "upstream", getDefaultBranch(ownerRepo));
 
         java.nio.file.Files.createDirectories(wtDir.getParent());
         String result = git(Actor.USER, mainDir,

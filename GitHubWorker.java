@@ -2,6 +2,7 @@
 //DEPS info.picocli:picocli:4.7.6
 //DEPS com.fasterxml.jackson.core:jackson-databind:2.17.2
 //DEPS com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.17.2
+//DEPS jakarta.mail:jakarta.mail-api:2.1.3
 //DEPS org.eclipse.angus:angus-mail:2.0.3
 //SOURCES Config.java
 //SOURCES GitHubClient.java
@@ -12,6 +13,17 @@
 //SOURCES WorkflowState.java
 //SOURCES SecurityTriage.java
 //SOURCES Notifier.java
+//SOURCES GitHubIssueHandlers.java
+// --- elf-bus-common v1.0.0 ---
+//SOURCES https://raw.githubusercontent.com/House-elves/elf-bus-common/v1.0.1/EnvelopeOptions.java
+//SOURCES https://raw.githubusercontent.com/House-elves/elf-bus-common/v1.0.1/ElfBusEnvelope.java
+//SOURCES https://raw.githubusercontent.com/House-elves/elf-bus-common/v1.0.1/ElfBusHandler.java
+//SOURCES https://raw.githubusercontent.com/House-elves/elf-bus-common/v1.0.1/ElfBusProducer.java
+//SOURCES https://raw.githubusercontent.com/House-elves/elf-bus-common/v1.0.1/ElfBusInboxes.java
+//SOURCES https://raw.githubusercontent.com/House-elves/elf-bus-common/v1.0.1/ElfBusSeenIds.java
+//SOURCES https://raw.githubusercontent.com/House-elves/elf-bus-common/v1.0.1/FileSystemBus.java
+//SOURCES https://raw.githubusercontent.com/House-elves/elf-bus-common/v1.0.1/ElfBusConsumer.java
+//SOURCES https://raw.githubusercontent.com/House-elves/elf-bus-common/v1.0.1/InMemoryBus.java
 
 import com.fasterxml.jackson.databind.JsonNode;
 import picocli.CommandLine;
@@ -92,6 +104,31 @@ public class GitHubWorker implements Callable<Integer> {
         Notifier notifier = new Notifier(config);
         IssueWorkflow issueWorkflow = new IssueWorkflow(gh, claude, security, notifier, config, dryRun);
         ReviewWorkflow reviewWorkflow = new ReviewWorkflow(gh, claude, config, dryRun);
+
+        // Process inter-elf bus messages from peer elves (mail-worker etc.).
+        // Runs before workflow discovery so issues filed via the bus this tick
+        // can be picked up by the regular workflow on the same tick.
+        // Skipped in --preview and --dry-run since execution has real side effects.
+        if (!preview && !dryRun) {
+            try {
+                var busProducer = new FileSystemBus(config.busRoot(), "github-worker");
+                var busConsumer = new ElfBusConsumer(
+                        config.busRoot(),
+                        "github-worker",
+                        config.busSeenIdsPath(),
+                        List.of(
+                                new GitHubIssueHandlers.Create(gh, config.githubUser),
+                                new GitHubIssueHandlers.Comment(gh),
+                                new GitHubIssueHandlers.Label(gh)
+                        ),
+                        busProducer
+                );
+                busConsumer.poll();
+            } catch (Exception e) {
+                System.err.println("elf-bus poll failed: " + e.getMessage());
+                // Continue with the regular workflow even if the bus poll fails.
+            }
+        }
 
         WorkflowState state = WorkflowState.load(Config.STATE_PATH);
         state.prune(config.lookbackDays);
