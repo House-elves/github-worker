@@ -16,6 +16,14 @@ import java.util.concurrent.TimeUnit;
 
 public class GitHubClient {
 
+    /**
+     * The prod-support elf's case-log label. Its issues are support tickets
+     * for a human (or that elf), never dev work - every discovery query
+     * excludes them, and the worker loop re-checks in case an item arrives
+     * through a path without the qualifier.
+     */
+    static final String PROD_SUPPORT_LABEL = "production-support";
+
     enum Actor { USER, BOT }
 
     private final Config config;
@@ -276,12 +284,17 @@ public class GitHubClient {
         // filing their own issue is the other way in: expecting someone who is
         // not a developer to know they must also assign it is how a request
         // sits untouched while looking, to them, like it was received.
+        // -label: excludes the prod-support elf's case logs: a support ticket
+        // must never be "implemented" by the dev elf, however it gets
+        // assigned. The worker-loop label check is the belt to this braces.
         List<JsonNode> issues = new ArrayList<>(searchIssues(
-                "assignee:" + config.githubUser + " is:open is:issue created:>=" + since));
+                "assignee:" + config.githubUser + " is:open is:issue created:>=" + since
+                        + " -label:" + PROD_SUPPORT_LABEL));
         for (String requester : config.requesters) {
             if (requester.isBlank()) continue;
             for (JsonNode extra : searchIssues(
-                    "author:" + requester.trim() + " is:open is:issue created:>=" + since)) {
+                    "author:" + requester.trim() + " is:open is:issue created:>=" + since
+                            + " -label:" + PROD_SUPPORT_LABEL)) {
                 boolean seen = issues.stream().anyMatch(i ->
                         i.path("repository").path("nameWithOwner").asText("")
                                 .equals(extra.path("repository").path("nameWithOwner").asText(""))
@@ -534,7 +547,8 @@ public class GitHubClient {
     private void fetchEyesForRepo(String ownerRepo, List<JsonNode> results) {
         for (String type : List.of("ISSUE", "PR")) {
             String searchType = "ISSUE".equals(type) ? "is:issue" : "is:pr";
-            String searchQuery = "repo:" + ownerRepo + " is:open " + searchType;
+            String searchQuery = "repo:" + ownerRepo + " is:open " + searchType
+                    + " -label:" + PROD_SUPPORT_LABEL;
 
             JsonNode data = graphqlWithVars(Actor.USER, """
                     query($q: String!) {
@@ -678,7 +692,8 @@ public class GitHubClient {
             // 1. Mentions (issues only)
             searchAndAddDiscoveries(results, state, "issue", "mention",
                     "mentions:" + config.githubUser + " created:>=" + since
-                            + " is:open is:issue " + scopeQualifier, 30);
+                            + " is:open is:issue -label:" + PROD_SUPPORT_LABEL + " "
+                            + scopeQualifier, 30);
 
             // 2. Topics — issues without linked PRs
             for (String topic : config.topics) {

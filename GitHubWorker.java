@@ -148,6 +148,12 @@ public class GitHubWorker implements Callable<Integer> {
             String title = issue.path("title").asText("");
 
             if (state.issues.containsKey(key)) continue;
+            if (hasProdSupportLabel(issue)) {
+                // Belt to the search-qualifier braces: a prod-support case log
+                // is a support ticket, never dev work.
+                System.out.println("  " + key + ": Skipping — production-support case log.");
+                continue;
+            }
             if (gh.alreadyHasPR(ownerRepo, number)) {
                 System.out.println("  " + key + ": Skipping — PR already exists.");
                 continue;
@@ -491,6 +497,16 @@ public class GitHubWorker implements Callable<Integer> {
         } catch (IOException e) {
             System.err.println("Warning: Failed to save state: " + e.getMessage());
         }
+    }
+
+    /** Search results carry labels; a missing labels node is simply no match. */
+    private static boolean hasProdSupportLabel(com.fasterxml.jackson.databind.JsonNode issue) {
+        for (var label : issue.path("labels")) {
+            if (GitHubClient.PROD_SUPPORT_LABEL.equalsIgnoreCase(label.path("name").asText(""))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean createWorkDir(Config config) {
