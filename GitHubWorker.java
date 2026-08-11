@@ -191,15 +191,23 @@ public class GitHubWorker implements Callable<Integer> {
 
             if (state.reviews.containsKey(key)) continue;
 
-            boolean selfRequested = gh.wasReviewSelfRequested(ownerRepo, number);
-            boolean eyesReacted = gh.wasEyesReactedByUser(ownerRepo, number);
+            // The bot opening a PR and requesting the principal's review IS
+            // the team's handoff — it needs no extra nudge. The
+            // self-requested / 👀 gate only exists for PRs from outsiders.
+            JsonNode extras = gh.fetchPRExtras(ownerRepo, number);
+            String author = extras == null ? "" : extras.path("author").path("login").asText("");
+            boolean botAuthored = !author.isEmpty() && author.equals(config.botUser);
+            boolean selfRequested = !botAuthored && gh.wasReviewSelfRequested(ownerRepo, number);
+            boolean eyesReacted = !botAuthored && !selfRequested
+                    && gh.wasEyesReactedByUser(ownerRepo, number);
 
-            if (!selfRequested && !eyesReacted) {
-                System.out.println("  " + key + ": Skipping — not self-requested, no 👀.");
+            if (!botAuthored && !selfRequested && !eyesReacted) {
+                System.out.println("  " + key + ": Skipping — not bot-authored, not self-requested, no 👀.");
                 continue;
             }
 
-            System.out.println("  " + key + ": Eligible (" + (selfRequested ? "self-requested" : "👀") + ")");
+            System.out.println("  " + key + ": Eligible ("
+                    + (botAuthored ? "bot-authored" : selfRequested ? "self-requested" : "👀") + ")");
 
             if (preview) continue;
 
@@ -208,10 +216,9 @@ public class GitHubWorker implements Callable<Integer> {
             entry.ownerRepo = ownerRepo;
             entry.prNumber = number;
 
-            JsonNode extras = gh.fetchPRExtras(ownerRepo, number);
             if (extras != null) {
                 entry.headBranch = extras.path("headRefName").asText("");
-                entry.author = extras.path("author").path("login").asText("");
+                entry.author = author;
             }
 
             state.reviews.put(key, entry);
