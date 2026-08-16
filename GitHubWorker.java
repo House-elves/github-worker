@@ -5,6 +5,7 @@
 //DEPS jakarta.mail:jakarta.mail-api:2.1.3
 //DEPS org.eclipse.angus:angus-mail:2.0.3
 //SOURCES Config.java
+//SOURCES Exec.java
 //SOURCES GitHubClient.java
 //SOURCES CodingAgent.java
 //SOURCES ClaudeAgent.java

@@ -39,40 +39,35 @@ public class GitHubClient {
     // --- Core execution ---
 
     String ghText(Actor actor, String... args) {
-        try {
-            ProcessBuilder pb = buildGhProcess(actor, args);
-            Process p = pb.start();
-            boolean finished = p.waitFor(120, TimeUnit.SECONDS);
-            if (!finished) {
-                p.destroyForcibly();
-                return null;
-            }
-            String stdout = new String(p.getInputStream().readAllBytes()).trim();
-            if (p.exitValue() != 0) {
-                String stderr = new String(p.getErrorStream().readAllBytes()).trim();
-                System.err.println("  gh failed: " + stderr);
-                return null;
-            }
-            return stdout;
-        } catch (Exception e) {
-            System.err.println("  gh error: " + e.getMessage());
+        Exec.Result r = Exec.run(buildGhProcess(actor, args), 120, TimeUnit.SECONDS);
+        if (r.timedOut()) {
+            System.err.println("  gh timed out after 120s: " + describe("gh", args));
             return null;
         }
+        if (r.exitCode() != 0) {
+            System.err.println("  gh failed: " + r.stderr());
+            return null;
+        }
+        return r.stdout();
     }
 
     int ghExitCode(Actor actor, String... args) {
-        try {
-            ProcessBuilder pb = buildGhProcess(actor, args);
-            Process p = pb.start();
-            boolean finished = p.waitFor(120, TimeUnit.SECONDS);
-            if (!finished) {
-                p.destroyForcibly();
-                return -1;
-            }
-            return p.exitValue();
-        } catch (Exception e) {
+        Exec.Result r = Exec.run(buildGhProcess(actor, args), 120, TimeUnit.SECONDS);
+        if (r.timedOut()) {
+            System.err.println("  gh timed out after 120s: " + describe("gh", args));
             return -1;
         }
+        return r.exitCode();
+    }
+
+    /**
+     * The command, for a timeout message. Truncated because a GraphQL query
+     * arrives here as one enormous argument, and a log line is not the place
+     * for it.
+     */
+    private static String describe(String command, String... args) {
+        String line = command + " " + String.join(" ", args);
+        return line.length() > 120 ? line.substring(0, 120) + "..." : line;
     }
 
     private ProcessBuilder buildGhProcess(Actor actor, String... args) {
@@ -248,31 +243,26 @@ public class GitHubClient {
     // --- Git commands with token ---
 
     String git(Actor actor, Path cwd, String... args) {
-        try {
-            List<String> cmd = new ArrayList<>();
-            cmd.add("git");
-            Collections.addAll(cmd, args);
-            ProcessBuilder pb = new ProcessBuilder(cmd);
-            pb.directory(cwd.toFile());
-            String token = (actor == Actor.BOT) ? config.botToken : config.githubToken;
-            pb.environment().put("GH_TOKEN", token);
-            Process p = pb.start();
-            boolean finished = p.waitFor(300, TimeUnit.SECONDS);
-            if (!finished) {
-                p.destroyForcibly();
-                return null;
-            }
-            String stdout = new String(p.getInputStream().readAllBytes()).trim();
-            if (p.exitValue() != 0) {
-                String stderr = new String(p.getErrorStream().readAllBytes()).trim();
-                System.err.println("  git failed: " + stderr);
-                return null;
-            }
-            return stdout;
-        } catch (Exception e) {
-            System.err.println("  git error: " + e.getMessage());
+        List<String> cmd = new ArrayList<>();
+        cmd.add("git");
+        Collections.addAll(cmd, args);
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.directory(cwd.toFile());
+        String token = (actor == Actor.BOT) ? config.botToken : config.githubToken;
+        pb.environment().put("GH_TOKEN", token);
+
+        Exec.Result r = Exec.run(pb, 300, TimeUnit.SECONDS);
+        if (r.timedOut()) {
+            // Said out loud, because this used to return the same null as an
+            // empty result and the caller had no way to tell the difference.
+            System.err.println("  git timed out after 300s: " + describe("git", args));
             return null;
         }
+        if (r.exitCode() != 0) {
+            System.err.println("  git failed: " + r.stderr());
+            return null;
+        }
+        return r.stdout();
     }
 
     // --- Issue discovery ---

@@ -1,5 +1,4 @@
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -47,34 +46,25 @@ public class ClaudeAgent implements CodingAgent {
         }
     }
 
-    private String execute(ProcessBuilder pb, String prompt, int timeoutMinutes, String context)
-            throws IOException, InterruptedException {
+    private String execute(ProcessBuilder pb, String prompt, int timeoutMinutes, String context) {
         appendLog("START", "cwd=" + context + " timeout=" + timeoutMinutes + "m prompt=" + truncate(prompt, 200));
 
         pb.redirectErrorStream(false);
-        Process process = pb.start();
+        // A review body is far larger than a pipe buffer, so this has to read
+        // while the process runs rather than after it exits - see Exec.
+        Exec.Result r = Exec.run(pb, timeoutMinutes, TimeUnit.MINUTES, prompt);
 
-        try (var os = process.getOutputStream()) {
-            os.write(prompt.getBytes(StandardCharsets.UTF_8));
-            os.flush();
-        }
-
-        boolean finished = process.waitFor(timeoutMinutes, TimeUnit.MINUTES);
-        if (!finished) {
-            process.destroyForcibly();
+        if (r.timedOut()) {
             appendLog("TIMEOUT", "after " + timeoutMinutes + " minutes");
             return null;
         }
-
-        String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-        if (process.exitValue() != 0) {
-            String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-            appendLog("FAIL", "exit=" + process.exitValue() + " " + truncate(stderr, 300));
+        if (r.exitCode() != 0) {
+            appendLog("FAIL", "exit=" + r.exitCode() + " " + truncate(r.stderr(), 300));
             return null;
         }
 
-        appendLog("OK", truncate(stdout, 500));
-        return stdout;
+        appendLog("OK", truncate(r.stdout(), 500));
+        return r.stdout();
     }
 
     private void appendLog(String level, String message) {
