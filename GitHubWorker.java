@@ -160,15 +160,25 @@ public class GitHubWorker implements Callable<Integer> {
                 continue;
             }
 
-            boolean selfAssigned = gh.wasSelfAssigned(ownerRepo, number);
-            boolean eyesReacted = gh.wasEyesReactedByUser(ownerRepo, number);
+            // An issue filed by the bot (mail triage assigns the principal on
+            // creation) or by a configured requester IS the handoff — the mail
+            // path already vets its senders, and requesters are trusted by
+            // being listed. The self-assigned / 👀 gate only exists for issues
+            // from anyone else, same as the bot-authored carve-out for reviews.
+            String author = issue.path("author").path("login").asText("");
+            boolean trustedAuthor = !author.isEmpty()
+                    && (author.equals(config.botUser) || config.requesters.contains(author));
+            boolean selfAssigned = !trustedAuthor && gh.wasSelfAssigned(ownerRepo, number);
+            boolean eyesReacted = !trustedAuthor && !selfAssigned
+                    && gh.wasEyesReactedByUser(ownerRepo, number);
 
-            if (!selfAssigned && !eyesReacted) {
-                System.out.println("  " + key + ": Skipping — not self-assigned, no 👀.");
+            if (!trustedAuthor && !selfAssigned && !eyesReacted) {
+                System.out.println("  " + key + ": Skipping — not trusted-author, not self-assigned, no 👀.");
                 continue;
             }
 
-            System.out.println("  " + key + ": Eligible (" + (selfAssigned ? "self-assigned" : "👀") + ")");
+            System.out.println("  " + key + ": Eligible ("
+                    + (trustedAuthor ? "trusted author: " + author : selfAssigned ? "self-assigned" : "👀") + ")");
 
             if (preview) continue;
 

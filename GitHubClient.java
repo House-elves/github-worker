@@ -302,6 +302,7 @@ public class GitHubClient {
                     nodes {
                       ... on Issue {
                         number title url createdAt updatedAt
+                        author { login }
                         repository { nameWithOwner }
                         labels(first: 20) { nodes { name } }
                       }
@@ -322,6 +323,9 @@ public class GitHubClient {
                 item.put("url", n.path("url").asText(""));
                 item.put("createdAt", n.path("createdAt").asText(""));
                 item.put("updatedAt", n.path("updatedAt").asText(""));
+                ObjectNode author = mapper.createObjectNode();
+                author.put("login", n.path("author").path("login").asText(""));
+                item.set("author", author);
                 ObjectNode repo = mapper.createObjectNode();
                 repo.put("nameWithOwner", n.path("repository").path("nameWithOwner").asText(""));
                 item.set("repository", repo);
