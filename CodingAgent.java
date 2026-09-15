@@ -72,14 +72,14 @@ public interface CodingAgent {
     static CodingAgent create(Config config) {
         String agent = config.agent;
         return switch (agent) {
-            case "claude" -> new ClaudeAgent();
+            case "claude" -> new ClaudeAgent(config.claudeCanary);
             // Add new agents here:
             // case "codex"  -> new CodexAgent();
             // case "aider"  -> new AiderAgent();
             // case "gemini" -> new GeminiAgent();
             default -> {
                 System.err.println("Unknown agent: " + agent + ", falling back to claude");
-                yield new ClaudeAgent();
+                yield new ClaudeAgent(config.claudeCanary);
             }
         };
     }
