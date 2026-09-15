@@ -51,6 +51,10 @@ public class SecurityTriage {
             return new Result(false, "Security triage failed to run — treating as suspicious by default");
         }
 
+        // Strict on purpose: the reply must OPEN with the verdict. Searching
+        // later lines would let an issue body coax a quoted "SAFE:" past the
+        // gate. The canary line that used to precede it is removed upstream
+        // in ClaudeAgent.stripCanary, which only drops a lone one-word line.
         String upper = result.strip().toUpperCase();
         if (upper.startsWith("SAFE:")) {
             return new Result(true, result.strip());
