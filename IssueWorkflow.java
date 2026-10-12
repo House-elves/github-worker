@@ -315,6 +315,15 @@ public class IssueWorkflow {
                 return WorkflowState.IssueState.CODING;
             }
 
+            // Someone may have opened a PR for this issue while the agent worked: don't open a second one.
+            String existing = gh.existingPR(ownerRepo, issueNumber, false);
+            if (existing != null) {
+                System.out.println("  An open PR already addresses it, not opening another: " + existing);
+                entry.prUrl = existing;
+                entry.lastUpdated = Instant.now();
+                return WorkflowState.IssueState.DONE;
+            }
+
             System.out.println("  Pushing to fork...");
             if (!gh.pushForceLease(ownerRepo, issueNumber, repoDir)) {
                 System.out.println("  Push failed, will retry.");

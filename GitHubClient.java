@@ -389,23 +389,40 @@ public class GitHubClient {
         return false;
     }
 
-    boolean alreadyHasPR(String ownerRepo, int issueNumber) {
+    /**
+     * The URL of an open PR that already addresses the issue, or null: one GitHub links as closing it ("Fixes #N",
+     * or linked in the sidebar), by anyone, or the bot's own fix/N branch. Then there's nothing for the worker to open.
+     */
+    String existingPR(String ownerRepo, int issueNumber) {
+        return existingPR(ownerRepo, issueNumber, true);
+    }
+
+    /** @param includeOwn false: only PRs by others (the bot's own fix/N PR is its own work in progress) */
+    String existingPR(String ownerRepo, int issueNumber, boolean includeOwn) {
         String[] parts = splitOwnerRepo(ownerRepo);
         String branch = "fix/" + issueNumber;
         JsonNode data = graphql(Actor.BOT, String.format("""
                 { repository(owner: "%s", name: "%s") {
                     pullRequests(headRefName: "%s", states: OPEN, first: 5) {
-                      nodes { author { login } }
+                      nodes { url author { login } }
                     }
-                } }""", parts[0], parts[1], branch));
-        if (data == null) return false;
-        JsonNode prs = data.path("repository").path("pullRequests").path("nodes");
-        for (JsonNode pr : prs) {
-            if (config.botUser.equals(pr.path("author").path("login").asText(""))) {
-                return true;
+                    issue(number: %d) {
+                      closedByPullRequestsReferences(first: 10, includeClosedPrs: false) {
+                        nodes { url state author { login } }
+                      }
+                    }
+                } }""", parts[0], parts[1], branch, issueNumber));
+        if (data == null) return null;
+        for (JsonNode pr : data.path("repository").path("pullRequests").path("nodes")) {
+            if (includeOwn && config.botUser.equals(pr.path("author").path("login").asText(""))) {
+                return pr.path("url").asText();
             }
         }
-        return false;
+        for (JsonNode pr : data.path("repository").path("issue").path("closedByPullRequestsReferences").path("nodes")) {
+            if (!"OPEN".equals(pr.path("state").asText())) continue;
+            if (includeOwn || !config.botUser.equals(pr.path("author").path("login").asText(""))) return pr.path("url").asText();
+        }
+        return null;
     }
 
     boolean hasBotReviewThumbsUp(String ownerRepo, int prNumber) {
@@ -504,7 +521,18 @@ public class GitHubClient {
         return "MERGED".equals(getPRState(ownerRepo, prNumber));
     }
 
-    boolean isBotReviewRequested(String ownerRepo, int prNumber) {
+    /**
+     * Whether a review has been asked of us again. The reviewer to look for is the principal,
+     * not the bot: GitHub drops a review request whose reviewer is the pull request's own
+     * author, and the bot opens most of the pull requests we are asked to review, so a request
+     * for the bot could never appear on one. Looking for the bot meant a pull request it opened
+     * could be reviewed exactly once and never again.
+     *
+     * <p>The request is cleared by {@link #clearReviewRequest} as soon as the review is posted,
+     * because our review is posted by the bot and so does not clear it the way a reviewer's own
+     * review would. Without that, a pending request would re-activate the review on every run.
+     */
+    boolean isReviewRequested(String ownerRepo, int prNumber) {
         String[] parts = splitOwnerRepo(ownerRepo);
         JsonNode data = graphql(Actor.USER, String.format("""
                 { repository(owner: "%s", name: "%s") {
@@ -521,7 +549,7 @@ public class GitHubClient {
         if (data == null) return false;
         JsonNode requests = data.path("repository").path("pullRequest").path("reviewRequests").path("nodes");
         for (JsonNode r : requests) {
-            if (config.botUser.equals(r.path("requestedReviewer").path("login").asText(""))) return true;
+            if (config.githubUser.equals(r.path("requestedReviewer").path("login").asText(""))) return true;
         }
         return false;
     }
@@ -1182,6 +1210,18 @@ public class GitHubClient {
                     pullRequest { id }
                   }
                 }""", prNodeId, userNodeId));
+    }
+
+    /**
+     * Take the principal back off the reviewers now the review is posted. The review itself
+     * comes from the bot, so GitHub leaves the principal's request standing; left there, it
+     * reads as "please review" for ever. Removed with the principal's own token, since the bot
+     * is not allowed to change reviewers.
+     */
+    void clearReviewRequest(String ownerRepo, int prNumber) {
+        ghText(Actor.USER, "api", "-X", "DELETE",
+                "repos/" + ownerRepo + "/pulls/" + prNumber + "/requested_reviewers",
+                "-f", "reviewers[]=" + config.githubUser);
     }
 
     void postPRReview(String ownerRepo, int prNumber, String body) {

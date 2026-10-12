@@ -155,8 +155,9 @@ public class GitHubWorker implements Callable<Integer> {
                 System.out.println("  " + key + ": Skipping — production-support case log.");
                 continue;
             }
-            if (gh.alreadyHasPR(ownerRepo, number)) {
-                System.out.println("  " + key + ": Skipping — PR already exists.");
+            String existing = gh.existingPR(ownerRepo, number);
+            if (existing != null) {
+                System.out.println("  " + key + ": Skipping — an open PR already addresses it: " + existing);
                 continue;
             }
 
@@ -314,7 +315,7 @@ public class GitHubWorker implements Callable<Integer> {
         for (var entry : state.reviews.entrySet()) {
             WorkflowState.ReviewEntry review = entry.getValue();
             if (review.state != WorkflowState.ReviewState.DONE) continue;
-            if (gh.isBotReviewRequested(review.ownerRepo, review.prNumber)) {
+            if (gh.isReviewRequested(review.ownerRepo, review.prNumber)) {
                 System.out.println("  " + entry.getKey() + ": Re-requested for review — reactivating.");
                 review.state = WorkflowState.ReviewState.NEW;
                 review.lastUpdated = java.time.Instant.now();

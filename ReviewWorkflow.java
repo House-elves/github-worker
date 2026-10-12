@@ -117,6 +117,8 @@ public class ReviewWorkflow {
                 System.out.println("  [DRY RUN] Would post review:\n" + truncate(reviewBody, 500));
             } else {
                 gh.postPRReview(ownerRepo, prNumber, reviewBody);
+                // The asking is done with: clear it, so asking again means asking again.
+                gh.clearReviewRequest(ownerRepo, prNumber);
                 System.out.println("  Review posted on " + ownerRepo + "#" + prNumber);
             }
 
