@@ -51,6 +51,12 @@ public class Config {
      * has no reason to know about - their issue would sit looking accepted.
      */
     Set<String> requesters;
+    /**
+     * The exact word the principal's global CLAUDE.md makes claude put on the
+     * first line of every reply. Only that line, matched exactly, is removed;
+     * blank strips nothing.
+     */
+    String claudeCanary;
 
     /** Prefix marking a config value that lives in GCP Secret Manager. */
     static final String SECRET_PREFIX = "sm://";
@@ -155,6 +161,7 @@ public class Config {
         c.topics = parseSet(raw.getOrDefault("TOPICS", ""));
         c.orgs = parseSet(raw.getOrDefault("ORGS", ""));
         c.busRoot = Path.of(raw.getOrDefault("BUS_ROOT", BUS_ROOT_DEFAULT.toString()));
+        c.claudeCanary = raw.getOrDefault("CLAUDE_CANARY", "");
         return c;
     }
 
