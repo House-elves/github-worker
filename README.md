@@ -103,6 +103,7 @@ Stored in `~/.config/github-worker/config`:
 | `REVIEW_AUTO_FIX` | Apply the review's own findings to the PR | `true` |
 | `REVIEW_AUTO_MERGE` | Merge the PR once CI is green | `true` |
 | `REVIEW_FIX_SEVERITIES` | Finding severities to act on | `CRITICAL,SUGGESTION` |
+| `MAX_OPEN_PRS_PER_REPO` | Most open bot PRs per repo; issues past it wait in CODING (`0` = no limit) | `3` |
 
 `ORGS` supports both `quarkiverse` (whole org) and `quarkusio/quarkus` (specific repo).
 
@@ -361,6 +362,9 @@ When you're requested as a reviewer on a PR, the bot can do the review for you.
 - **Bot account isolation** — all automated actions come from the bot account, never yours
 - **Active hours** — the worker only runs during configured hours
 - **Draft PRs** — code changes always start as draft PRs; you always have final say
+- **AI disclosure** — every PR description ends with a note that it was written with an AI coding agent, linking the plan you approved
+- **Open PR cap** — at most `MAX_OPEN_PRS_PER_REPO` open bot PRs per repo; more issues wait until some are merged or closed
+- **Overlap check** — the plan, the fix and the PR description see other open PRs on the issue and other assignees, and the plan says when not to proceed
 
 ## State
 

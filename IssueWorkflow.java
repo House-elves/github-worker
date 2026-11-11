@@ -61,6 +61,7 @@ public class IssueWorkflow {
 
         String issueBody = details.path("body").asText("");
         String labels = buildLabelsString(details);
+        entry.labels = labels;
         String commentsText = buildCommentsText(details);
 
         System.out.println("  Security triage...");
@@ -90,6 +91,8 @@ public class IssueWorkflow {
                     """.formatted(entry.feedbackText);
         }
 
+        String overlap = overlapContext(details, ownerRepo, issueNumber);
+
         String prompt = """
                 You are analyzing a GitHub issue to understand it and propose a fix.
 
@@ -102,16 +105,22 @@ public class IssueWorkflow {
 
                 Comments:
                 %s
-                %s
+                %s%s
                 Write a comment that:
                 1. Summarizes your understanding of the issue (2-3 sentences)
-                2. Proposes a solution approach (2-3 bullet points)
-                3. Ends with: "@%s Does this look right? React with 👍 to proceed or 👎 if I should reconsider."
+                2. Says where the root cause is (module, class or file) and why the fix belongs
+                   there rather than where the symptom shows
+                3. Proposes a solution approach (2-3 bullet points)
+                4. If an open PR above already works on this, someone else has claimed the issue
+                   (assigned, or asked to work on it and was told yes), a maintainer has said it is
+                   not open to outside contribution, or the comments say it is already fixed or not
+                   a bug: say so in one line, naming the PR or comment, and recommend not proceeding
+                5. Ends with: "@%s Does this look right? React with 👍 to proceed or 👎 if I should reconsider."
 
                 Keep it concise and technical. Do NOT use filler phrases.
                 Output ONLY the comment body, nothing else.
                 """.formatted(ownerRepo, issueNumber, entry.title, labels,
-                issueBody, commentsText, feedbackContext, config.githubUser);
+                issueBody, commentsText, feedbackContext, overlap, config.githubUser);
 
         System.out.println("  Generating understanding...");
         String comment = claude.runBare(prompt);
@@ -257,8 +266,18 @@ public class IssueWorkflow {
 
         String issueBody = details.path("body").asText("");
         String labels = buildLabelsString(details);
+        entry.labels = labels;
         String commentsText = buildCommentsText(details);
         String defaultBranch = gh.getDefaultBranch(ownerRepo);
+
+        if (config.maxOpenPRsPerRepo > 0) {
+            int open = gh.countOpenPRsBy(ownerRepo, config.botUser);
+            if (open >= config.maxOpenPRsPerRepo) {
+                System.out.println("  " + open + " open PRs in " + ownerRepo + " already (limit "
+                        + config.maxOpenPRsPerRepo + "), waiting for some to be merged or closed.");
+                return WorkflowState.IssueState.CODING;
+            }
+        }
 
         if (dryRun) {
             System.out.println("  [DRY RUN] Would clone and fix issue.");
@@ -289,13 +308,17 @@ public class IssueWorkflow {
 
                     Comments:
                     %s
-
+                    %s
                     Instructions:
-                    1. FIRST read CLAUDE.md, CONTRIBUTING.md, or similar guides in the repo root
+                    1. FIRST read CLAUDE.md, AGENTS.md, CONTRIBUTING.md, AI_POLICY.md or similar
+                       guides in the repo root, and follow them
                     2. Analyze the issue carefully
-                    3. Understand the codebase and find the relevant code
-                    4. Implement a fix for the issue
-                    5. Write or update tests if applicable
+                    3. Understand the codebase and find the relevant code. Check whether the default
+                       branch already fixes it, for example through a newer version of a dependency
+                    4. Fix the root cause, in the place the project would fix it, not a workaround
+                       where the symptom shows. Keep the change to what the issue needs
+                    5. Add or update a focused test that fails without the fix, in the style of the
+                       module's existing tests. Do not add tests for behaviour the change does not touch
                     6. Build using the project's recommended build command
                     7. Commit your changes with a clear commit message
 
@@ -306,7 +329,8 @@ public class IssueWorkflow {
                     - Do NOT add Co-Authored-By trailers
 
                     Make a single commit with all your changes.
-                    """.formatted(ownerRepo, issueNumber, entry.title, labels, issueBody, commentsText);
+                    """.formatted(ownerRepo, issueNumber, entry.title, labels, issueBody, commentsText,
+                    overlapContext(details, ownerRepo, issueNumber));
 
             System.out.println("  Running Claude to fix issue...");
             String fixOutput = claude.run(fixPrompt, repoDir);
@@ -345,15 +369,20 @@ public class IssueWorkflow {
                     Rules:
                     - Start with "Fixes #%d" on its own line
                     - Then a blank line, followed by a concise explanation of what was changed and why
+                    - If other open PRs are listed below, end with one line "Related: #a, #b" and,
+                      only if it is clear, a few words on how this differs
+                    %s
                     - Focus on the "why", not the "what"
                     - No bullet lists, no headers, no markdown formatting — just plain prose
                     - 2-4 sentences max
-                    - Do NOT mention AI, Claude, automated tools, or that this was generated
+                    - Do not add a note about how it was written; one is appended for you
                     - Output ONLY the PR description text, nothing else
-                    """.formatted(issueNumber, entry.title, issueBody, issueNumber);
+                    """.formatted(issueNumber, entry.title, issueBody, issueNumber,
+                    overlapContext(details, ownerRepo, issueNumber));
 
             String prBody = claude.runBare(prDescPrompt);
             if (prBody == null) prBody = "Fixes #" + issueNumber;
+            prBody = prBody.strip() + "\n\n" + disclosure(ownerRepo, issueNumber, entry.botCommentId);
 
             System.out.println("  Creating draft PR...");
             String prUrl = gh.createDraftPR(ownerRepo, defaultBranch, issueNumber, commitMsg, prBody);
@@ -1199,6 +1228,42 @@ public class IssueWorkflow {
             sb.append(l.path("name").asText(""));
         }
         return sb.toString();
+    }
+
+    /**
+     * Other open PRs on this issue and who else is assigned, for the prompts.
+     * Maintainers of busy projects spend their time closing PRs that duplicate or
+     * collide with another one, and fixes for issues someone else already claimed.
+     */
+    private String overlapContext(JsonNode details, String ownerRepo, int issueNumber) {
+        StringBuilder sb = new StringBuilder();
+        String related = gh.relatedOpenPRs(ownerRepo, issueNumber);
+        if (!related.isBlank()) {
+            sb.append("\nOther open PRs that mention this issue:\n").append(related);
+        }
+        java.util.List<String> others = new java.util.ArrayList<>();
+        for (JsonNode a : details.path("assignees")) {
+            String login = a.path("login").asText("");
+            if (!login.isEmpty() && !login.equals(config.githubUser) && !login.equals(config.botUser)) others.add(login);
+        }
+        if (!others.isEmpty()) {
+            sb.append("\nAlso assigned to: ").append(String.join(", ", others)).append("\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Says the PR was written with an AI agent and who answers for it. Projects
+     * like Quarkus allow AI-assisted PRs but not ones without a human taking
+     * responsibility, and an unmarked bot PR reads as the latter.
+     */
+    private String disclosure(String ownerRepo, int issueNumber, Long planCommentId) {
+        String plan = planCommentId != null && planCommentId > 0
+                ? "[the approach](https://github.com/" + ownerRepo + "/issues/" + issueNumber
+                        + "#issuecomment-" + planCommentId + ")"
+                : "the approach";
+        return "_Written with an AI coding agent for @" + config.githubUser + ", who approved "
+                + plan + " and reviews this change before it is ready to merge._";
     }
 
     private String buildCommentsText(JsonNode details) {

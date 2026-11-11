@@ -40,6 +40,12 @@ public class Config {
     /** Finding severities a review will act on; anything else stays a comment. */
     Set<String> reviewFixSeverities;
     /**
+     * Most open PRs the bot keeps in one repo; 0 means no limit. Busy projects
+     * are moving to per-contributor caps, and a reviewer facing ten bot PRs at
+     * once reviews none of them well. Issues past the cap wait in CODING.
+     */
+    int maxOpenPRsPerRepo;
+    /**
      * GitHub logins whose 👍/👎/comment settles an AWAITING_APPROVAL issue.
      * More than the principal now: a product owner who is not a developer can
      * approve their own request without going through him.
@@ -149,6 +155,7 @@ public class Config {
                 .stream().map(String::toUpperCase).collect(Collectors.toSet());
         // The principal always approves, whatever else is configured - losing
         // that to a typo would strand every issue in AWAITING_APPROVAL.
+        c.maxOpenPRsPerRepo = Integer.parseInt(raw.getOrDefault("MAX_OPEN_PRS_PER_REPO", "3").trim());
         c.approvers = new java.util.HashSet<>(parseSet(raw.getOrDefault("APPROVERS", "")));
         c.approvers.add(c.githubUser);
         c.requesters = parseSet(raw.getOrDefault("REQUESTERS", ""));

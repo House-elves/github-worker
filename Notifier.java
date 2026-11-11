@@ -12,11 +12,14 @@ public class Notifier {
         this.config = config;
     }
 
-    record ProcessingResult(String repo, String issueOrPR, String title, String url, String prUrl,
+    /** labels may be null or empty. Title and labels go with every link: a bare link tells the reader nothing. */
+    record ProcessingResult(String repo, String issueOrPR, String title, String labels, String url, String prUrl,
                             String fromState, String toState) {
         String summary() {
             StringBuilder sb = new StringBuilder();
-            sb.append(repo).append(" — ").append(issueOrPR).append(": ").append(title).append("\n");
+            sb.append(repo).append(" — ").append(issueOrPR).append(": ").append(title);
+            if (labels != null && !labels.isBlank()) sb.append(" [").append(labels).append("]");
+            sb.append("\n");
             sb.append("  ").append(fromState).append(" → ").append(toState).append("\n");
             if (url != null) sb.append("  ").append(url).append("\n");
             if (prUrl != null) sb.append("  PR: ").append(prUrl).append("\n");

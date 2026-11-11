@@ -425,6 +425,56 @@ public class GitHubClient {
         return null;
     }
 
+    /** Open PRs in the repo authored by login, or -1 when the search fails. */
+    int countOpenPRsBy(String ownerRepo, String login) {
+        JsonNode data = graphql(Actor.BOT, String.format("""
+                { search(query: "repo:%s is:pr is:open author:%s", type: ISSUE, first: 1) { issueCount } }""",
+                ownerRepo, login));
+        if (data == null || !data.path("search").has("issueCount")) return -1;
+        return data.path("search").path("issueCount").asInt();
+    }
+
+    /**
+     * Open PRs by others that mention this issue, one line each ("#123 title (author) [labels]").
+     * existingPR only catches PRs that close the issue; maintainers on busy projects
+     * mostly see overlap the other way: a PR that works on the same issue without
+     * "Fixes #N", or a rival fix for a duplicate issue that links to this one.
+     * Empty when there are none or the lookup fails.
+     */
+    String relatedOpenPRs(String ownerRepo, int issueNumber) {
+        String[] parts = splitOwnerRepo(ownerRepo);
+        JsonNode data = graphql(Actor.BOT, String.format("""
+                { repository(owner: "%s", name: "%s") {
+                    issue(number: %d) {
+                      timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 50) {
+                        nodes { ... on CrossReferencedEvent { source { ... on PullRequest {
+                          number title state isDraft author { login }
+                          repository { nameWithOwner }
+                          labels(first: 5) { nodes { name } }
+                        } } } }
+                      }
+                    }
+                } }""", parts[0], parts[1], issueNumber));
+        if (data == null) return "";
+        java.util.Set<Integer> seen = new java.util.HashSet<>();
+        StringBuilder sb = new StringBuilder();
+        for (JsonNode ev : data.path("repository").path("issue").path("timelineItems").path("nodes")) {
+            JsonNode pr = ev.path("source");
+            if (!"OPEN".equals(pr.path("state").asText())) continue;
+            if (!ownerRepo.equalsIgnoreCase(pr.path("repository").path("nameWithOwner").asText(""))) continue;
+            String author = pr.path("author").path("login").asText("");
+            if (config.botUser.equals(author)) continue;
+            if (!seen.add(pr.path("number").asInt())) continue;
+            List<String> labels = new ArrayList<>();
+            for (JsonNode l : pr.path("labels").path("nodes")) labels.add(l.path("name").asText());
+            sb.append("#").append(pr.path("number").asInt()).append(" ").append(pr.path("title").asText())
+                    .append(" (").append(author).append(pr.path("isDraft").asBoolean() ? ", draft" : "").append(")");
+            if (!labels.isEmpty()) sb.append(" [").append(String.join(", ", labels)).append("]");
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
     boolean hasBotReviewThumbsUp(String ownerRepo, int prNumber) {
         String[] parts = splitOwnerRepo(ownerRepo);
         JsonNode data = graphql(Actor.USER, String.format("""

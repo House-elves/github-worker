@@ -384,7 +384,7 @@ public class GitHubWorker implements Callable<Integer> {
                 issue.state = after;
                 if (before != after) {
                     results.add(new Notifier.ProcessingResult(
-                            issue.ownerRepo, "#" + issue.issueNumber, issue.title,
+                            issue.ownerRepo, "#" + issue.issueNumber, issue.title, issue.labels,
                             "https://github.com/" + issue.ownerRepo + "/issues/" + issue.issueNumber,
                             issue.prUrl, before.name(), after.name()));
                     processed++;
@@ -413,7 +413,7 @@ public class GitHubWorker implements Callable<Integer> {
                     review.state = after;
                     if (before != after) {
                         results.add(new Notifier.ProcessingResult(
-                                review.ownerRepo, "PR#" + review.prNumber, review.title,
+                                review.ownerRepo, "PR#" + review.prNumber, review.title, null,
                                 "https://github.com/" + review.ownerRepo + "/pull/" + review.prNumber,
                                 null, before.name(), after.name()));
                         processed++;

@@ -38,6 +38,8 @@ public class WorkflowState {
         public int attempts;
         public String feedbackText;
         public String title;
+        /** Comma-separated, for the summary email: a link alone tells the reader nothing. */
+        public String labels;
         public String ownerRepo;
         public int issueNumber;
     }
